@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>備品位置查詢系統 (Google Sheets Ver)</title>
+    
+    <!-- 1. 引入核心函式庫 -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 新增: PapaParse 用於解析 Google Sheets CSV -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#2563eb">
+
+    <style>
+        body {
+            background-color: #f3f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .safe-area-bottom {
+            padding-bottom: env(safe-area-inset-bottom);
+        }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* 下拉選單樣式優化 */
+        select {
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+            background-repeat: no-repeat;
+            background-position: right 0.5rem center;
+            background-size: 1em;
+        }
+        /* 讓 placeholder 文字稍微淺一點 */
+        input::placeholder {
+            color: #9ca3af; 
+        }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // ==========================================
+        // 🔧 設定區：Google Sheets 設定
+        // ==========================================
+        
+        // 請將您的 Google Sheet "發布到網路" 後的 CSV 連結貼在這裡
+        const GOOGLE_SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/1gfLaPWDxW5NOW-mMi_Z1_j-TMh7PSTnC14XsLRMkI6U/edit?usp=sharing"; 
+        
+        // 備用資料
+        const FALLBACK_DB = [
+            {
+                id: 101, system: "IT設備", subsystem: "網路", category: "交換器", itemType: "L2 Switch",
+                itemName: "Cisco Catalyst 2960-X", partNumber: "WS-C2960X-24TS-L", serialNumber: "FOC1822Y0X1",
+                spec: "24 Port GigE", quantity: 2, unit: "台", lastMoveDate: "2025-11-20",
+                locationCode: "N-A-02-WH-R05-A1", area: "北區", building: "A棟", floor: "2F", office: "倉儲區", rack: "R-05", bin: "A1",
+                images: {
+                    bin: "https://placehold.co/600x400/e2e8f0/1e293b?text=儲位:A1+特寫",
+                    office: "https://placehold.co/600x400/f1f5f9/475569?text=倉儲區+平面",
+                    floor: "https://placehold.co/600x400/f8fafc/64748b?text=2F+樓層"
+                }
+            },
+            {
+                id: 102, system: "IT設備", subsystem: "伺服器", category: "硬碟", itemType: "HDD",
+                itemName: "Seagate Exos X18 18TB", partNumber: "ST18000NM000J", serialNumber: "WDC-X18-9921",
+                spec: "SATA 6Gb/s", quantity: 5, unit: "顆", lastMoveDate: "2025-11-21",
+                locationCode: "HQ-RDC-B1-IDC-C10-B3", area: "總部", building: "研發中心", floor: "B1", office: "機房", rack: "C-10", bin: "B3",
+                images: {
+                    bin: "https://placehold.co/600x400/e2e8f0/1e293b?text=儲位:B3+示意",
+                    office: "https://placehold.co/600x400/f1f5f9/475569?text=機房+平面",
+                    floor: "https://placehold.co/600x400/f8fafc/64748b?text=B1+樓層"
+                }
+            },
+            {
+                id: 103, system: "行政用品", subsystem: "耗材", category: "碳粉匣", itemType: "高容量",
+                itemName: "Fuji Xerox CT202330", partNumber: "CT202330", serialNumber: "FX-BLK-2025A",
+                spec: "黑色", quantity: 0, unit: "盒", lastMoveDate: "2025-10-15",
+                locationCode: "S-ADM-01-GA-S01-C1", area: "南區", building: "行政大樓", floor: "1F", office: "總務處", rack: "S-01", bin: "C1",
+                images: {
+                    bin: "https://placehold.co/600x400/e2e8f0/1e293b?text=儲位:C1+示意",
+                    office: "https://placehold.co/600x400/f1f5f9/475569?text=總務處+平面",
+                    floor: "https://placehold.co/600x400/f8fafc/64748b?text=1F+樓層"
+                }
+            }
+        ];
+
+        // ==========================================
+        // 🧩 子元件
+        // ==========================================
+
+        const LocationBreadcrumbs = ({ item }) => (
+            <div className="flex flex-wrap items-center gap-1 text-sm text-gray-600 mb-3 bg-white p-3 rounded-lg shadow-sm border border-gray-100">
+                <span className="font-semibold text-blue-600"><i className="fas fa-map-marker-alt mr-1"></i>{item.locationCode}</span>
+                <div className="w-full h-px bg-gray-100 my-1"></div>
+                <div className="flex items-center text-xs text-gray-500 space-x-1">
+                    <span>{item.area}</span><i className="fas fa-chevron-right text-[10px]"></i>
+                    <span>{item.building}</span><i className="fas fa-chevron-right text-[10px]"></i>
+                    <span>{item.floor}</span><i className="fas fa-chevron-right text-[10px]"></i>
+                    <span>{item.office}</span><i className="fas fa-chevron-right text-[10px]"></i>
+                    <span className="font-bold text-gray-700">{item.rack}-{item.bin}</span>
+                </div>
+            </div>
+        );
+
+        const DetailPage = ({ item, onBack }) => {
+            const [activeTab, setActiveTab] = useState('bin');
+            const images = item.images || {};
+
+            return (
+                <div className="min-h-screen bg-gray-50 pb-20 animate-fade-in">
+                    <div className="sticky top-0 z-20 bg-white shadow-sm px-4 py-3 flex items-center gap-3">
+                        <button onClick={onBack} className="p-2 text-gray-600 active:bg-gray-100 rounded-full">
+                            <i className="fas fa-arrow-left text-xl"></i>
+                        </button>
+                        <div className="flex-1 truncate">
+                            <h1 className="text-lg font-bold text-gray-800 truncate">{item.itemName}</h1>
+                            <p className="text-xs text-gray-500">{item.serialNumber}</p>
+                        </div>
+                        <div className={`px-3 py-1 rounded-full text-xs font-bold ${item.quantity > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                            {item.quantity > 0 ? `${item.quantity} ${item.unit}` : '缺貨'}
+                        </div>
+                    </div>
+
+                    <div className="p-4 space-y-4">
+                        <div className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200">
+                            <div className="flex border-b border-gray-100">
+                                {[
+                                    { id: 'bin', label: '儲位示意', icon: 'fa-box' },
+                                    { id: 'office', label: '辦公室', icon: 'fa-door-open' },
+                                    { id: 'floor', label: '樓層圖', icon: 'fa-building' }
+                                ].map(tab => (
+                                    <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+                                        className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-colors
+                                            ${activeTab === tab.id ? 'text-blue-600 border-b-2 border-blue-600 bg-blue-50/50' : 'text-gray-500 hover:text-gray-700'}`}>
+                                        <i className={`fas ${tab.icon}`}></i>{tab.label}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="relative bg-gray-900 aspect-video flex items-center justify-center">
+                                {images[activeTab] ? (
+                                    <img src={images[activeTab]} alt={activeTab} className="w-full h-full object-contain" />
+                                ) : (
+                                    <div className="text-gray-500 text-sm">無圖片資料</div>
+                                )}
+                            </div>
+                        </div>
+
+                        <LocationBreadcrumbs item={item} />
+
+                        <div className="bg-white rounded-xl shadow-sm p-4 border border-gray-200">
+                            <h3 className="text-sm font-bold text-gray-800 mb-3 border-l-4 border-blue-500 pl-2">物品詳情</h3>
+                            <div className="space-y-3 text-sm">
+                                <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">系統分類</span><span className="text-gray-800">{item.system} / {item.subsystem}</span></div>
+                                <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">類別 / 品項</span><span className="text-gray-800">{item.category} / {item.itemType}</span></div>
+                                <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">料號 (P/N)</span><span className="text-gray-800 font-mono">{item.partNumber}</span></div>
+                                <div className="flex justify-between border-b border-gray-50 pb-2"><span className="text-gray-500">規格</span><span className="text-gray-800 text-right max-w-[60%]">{item.spec}</span></div>
+                                <div className="flex justify-between pt-1"><span className="text-gray-500">最後異動</span><span className="text-gray-800 font-bold">{item.lastMoveDate}</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 safe-area-bottom flex gap-3 shadow-lg">
+                        <button className="flex-1 bg-white border border-blue-600 text-blue-600 py-2.5 rounded-lg font-bold active:bg-blue-50"><i className="fas fa-clipboard-check mr-2"></i>盤點</button>
+                        <button className="flex-1 bg-blue-600 text-white py-2.5 rounded-lg font-bold shadow-lg active:scale-[0.98] transition-transform"><i className="fas fa-dolly mr-2"></i>出庫</button>
+                    </div>
+                </div>
+            );
+        };
+
+        // ==========================================
+        // 🔍 首頁 / 搜尋頁 (包含多層級篩選邏輯)
+        // ==========================================
+        const HomePage = ({ data, onSelectItem, loading }) => {
+            const [query, setQuery] = useState('');
+            
+            // 狀態：各層級的篩選值
+            const [filterArea, setFilterArea] = useState('All');
+            const [filterSystem, setFilterSystem] = useState('All');
+            const [filterSubsystem, setFilterSubsystem] = useState('All');
+            const [filterCategory, setFilterCategory] = useState('All');
+            const [filterItemType, setFilterItemType] = useState('All');
+            const [filterItemName, setFilterItemName] = useState('All');
+
+            // 工具：取得唯一選項列表
+            const getUniqueOptions = (dataset, key) => ['All', ...new Set(dataset.map(d => d[key]).filter(Boolean))];
+
+            // =================================================
+            // ⚡️ 階層式資料過濾與選項生成 (Cascade Logic)
+            // =================================================
+            
+            // 1. 區域過濾 (Area) - 最上層
+            const areaOptions = useMemo(() => getUniqueOptions(data, 'area'), [data]);
+            const dataLevel1 = useMemo(() => filterArea === 'All' ? data : data.filter(d => d.area === filterArea), [data, filterArea]);
+
+            // 2. 系統過濾 (System)
+            const systemOptions = useMemo(() => getUniqueOptions(dataLevel1, 'system'), [dataLevel1]);
+            const dataLevel2 = useMemo(() => filterSystem === 'All' ? dataLevel1 : dataLevel1.filter(d => d.system === filterSystem), [dataLevel1, filterSystem]);
+
+            // 3. 子系統過濾 (Subsystem)
+            const subsystemOptions = useMemo(() => getUniqueOptions(dataLevel2, 'subsystem'), [dataLevel2]);
+            const dataLevel3 = useMemo(() => filterSubsystem === 'All' ? dataLevel2 : dataLevel2.filter(d => d.subsystem === filterSubsystem), [dataLevel2, filterSubsystem]);
+
+            // 4. 類別過濾 (Category)
+            const categoryOptions = useMemo(() => getUniqueOptions(dataLevel3, 'category'), [dataLevel3]);
+            const dataLevel4 = useMemo(() => filterCategory === 'All' ? dataLevel3 : dataLevel3.filter(d => d.category === filterCategory), [dataLevel3, filterCategory]);
+
+            // 5. 品項過濾 (ItemType)
+            const itemTypeOptions = useMemo(() => getUniqueOptions(dataLevel4, 'itemType'), [dataLevel4]);
+            const dataLevel5 = useMemo(() => filterItemType === 'All' ? dataLevel4 : dataLevel4.filter(d => d.itemType === filterItemType), [dataLevel4, filterItemType]);
+
+            // 6. 品名過濾 (ItemName)
+            const itemNameOptions = useMemo(() => getUniqueOptions(dataLevel5, 'itemName'), [dataLevel5]);
+            const dataLevel6 = useMemo(() => filterItemName === 'All' ? dataLevel5 : dataLevel5.filter(d => d.itemName === filterItemName), [dataLevel5, filterItemName]);
+
+            // 7. 最終結果 (包含文字搜尋)
+            const finalResults = useMemo(() => {
+                if (!query.trim()) return dataLevel6;
+                const lowerQ = query.toLowerCase();
+                return dataLevel6.filter(item => 
+                    (item.itemName || '').toLowerCase().includes(lowerQ) || 
+                    (item.serialNumber || '').toLowerCase().includes(lowerQ) ||
+                    (item.locationCode || '').toLowerCase().includes(lowerQ)
+                );
+            }, [dataLevel6, query]);
+
+            // =================================================
+            // 🔄 Handlers: 處理變更並重置下層
+            // =================================================
+
+            const handleAreaChange = (e) => {
+                setFilterArea(e.target.value);
+                // 重置所有下層
+                setFilterSystem('All'); setFilterSubsystem('All'); setFilterCategory('All'); setFilterItemType('All'); setFilterItemName('All');
+            };
+
+            const handleSystemChange = (e) => {
+                setFilterSystem(e.target.value);
+                // 重置下層
+                setFilterSubsystem('All'); setFilterCategory('All'); setFilterItemType('All'); setFilterItemName('All');
+            };
+
+            const handleSubsystemChange = (e) => {
+                setFilterSubsystem(e.target.value);
+                setFilterCategory('All'); setFilterItemType('All'); setFilterItemName('All');
+            };
+
+            const handleCategoryChange = (e) => {
+                setFilterCategory(e.target.value);
+                setFilterItemType('All'); setFilterItemName('All');
+            };
+
+            const handleItemTypeChange = (e) => {
+                setFilterItemType(e.target.value);
+                setFilterItemName('All');
+            };
+
+            // UI 輔助元件：下拉選單
+            const FilterSelect = ({ label, value, options, onChange, disabled }) => (
+                <div className="relative min-w-[45%] flex-1">
+                    <select 
+                        value={value} 
+                        onChange={onChange}
+                        disabled={disabled || options.length <= 1}
+                        className={`w-full appearance-none border rounded-lg py-2 pl-3 pr-8 text-sm focus:outline-none transition-colors
+                            ${value !== 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200'}
+                            ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+                        `}
+                        style={value !== 'All' ? {} : {backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='gray' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`}}
+                    >
+                        <option value="All">{label} (全)</option>
+                        {options.filter(opt => opt !== 'All').map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                    </select>
+                    <i className={`fas fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-xs pointer-events-none ${value !== 'All' ? 'text-blue-200' : 'text-gray-400'}`}></i>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <div className="bg-blue-600 px-4 pt-12 pb-6 rounded-b-[2rem] shadow-lg relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                            <i className="fas fa-boxes text-9xl absolute -right-10 -top-10 text-white"></i>
+                        </div>
+                        <div className="relative z-10">
+                            <h1 className="text-white text-2xl font-bold mb-1">
+                                備品查詢系統 
+                                {loading && <span className="text-xs bg-blue-500 px-2 py-1 rounded ml-2 animate-pulse">更新中...</span>}
+                            </h1>
+                            
+                            {/* 搜尋輸入框 */}
+                            <div className="bg-white rounded-xl shadow-lg flex items-center p-3 mb-4">
+                                <i className="fas fa-search text-gray-400 ml-2"></i>
+                                <input type="text" className="flex-1 ml-3 outline-none text-gray-700 placeholder-gray-400" placeholder="快速搜尋序號、編號..." value={query} onChange={e => setQuery(e.target.value)} />
+                                {query && <button onClick={() => setQuery('')} className="text-gray-400 p-1"><i className="fas fa-times-circle"></i></button>}
+                            </div>
+
+                            {/* 多層級過濾器 (Grid Layout) */}
+                            <div className="flex flex-col gap-2">
+                                {/* Row 1: 區域 (獨立) */}
+                                <FilterSelect label="📍 區域" value={filterArea} options={areaOptions} onChange={handleAreaChange} />
+                                
+                                {/* Row 2: 系統 | 子系統 */}
+                                <div className="flex gap-2">
+                                    <FilterSelect label="系統" value={filterSystem} options={systemOptions} onChange={handleSystemChange} />
+                                    <FilterSelect label="子系統" value={filterSubsystem} options={subsystemOptions} onChange={handleSubsystemChange} disabled={filterSystem === 'All'} />
+                                </div>
+
+                                {/* Row 3: 類別 | 品項 */}
+                                <div className="flex gap-2">
+                                    <FilterSelect label="類別" value={filterCategory} options={categoryOptions} onChange={handleCategoryChange} disabled={filterSubsystem === 'All'} />
+                                    <FilterSelect label="品項" value={filterItemType} options={itemTypeOptions} onChange={handleItemTypeChange} disabled={filterCategory === 'All'} />
+                                </div>
+
+                                {/* Row 4: 品名 (全寬) */}
+                                <FilterSelect label="品名" value={filterItemName} options={itemNameOptions} onChange={e => setFilterItemName(e.target.value)} disabled={filterItemType === 'All'} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-4 pb-20">
+                        <div className="flex justify-between items-end mb-3">
+                            <h2 className="text-gray-800 font-bold text-lg">查詢結果</h2>
+                            <span className="text-xs text-gray-500 bg-gray-200 px-2 py-1 rounded-full">{finalResults.length} 筆</span>
+                        </div>
+
+                        <div className="space-y-3">
+                            {finalResults.map((item, idx) => (
+                                <div key={idx} onClick={() => onSelectItem(item)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 active:scale-[0.99] transition-transform cursor-pointer flex gap-4">
+                                    <div className="w-20 h-20 bg-gray-100 rounded-lg flex-shrink-0 overflow-hidden relative">
+                                        <img src={item.images?.bin || 'https://placehold.co/100x100?text=No+Image'} className="w-full h-full object-cover" alt="" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex justify-between items-start">
+                                            <h3 className="font-bold text-gray-800 truncate text-sm mb-1">{item.itemName}</h3>
+                                            {item.quantity <= 0 && <span className="bg-red-50 text-red-600 text-[10px] px-1.5 py-0.5 rounded font-bold border border-red-100">缺貨</span>}
+                                        </div>
+                                        <p className="text-xs text-gray-500 mb-2">S/N: {item.serialNumber}</p>
+                                        <div className="flex items-center gap-1 text-xs text-blue-600 bg-blue-50 w-fit px-2 py-1 rounded">
+                                            <i className="fas fa-map-marker-alt"></i><span className="font-mono">{item.locationCode}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                            {finalResults.length === 0 && <div className="text-center py-10 text-gray-400"><i className="fas fa-inbox text-4xl mb-3"></i><p>找不到符合的備品</p></div>}
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // ==========================================
+        // 🚀 主程式
+        // ==========================================
+        const App = () => {
+            const [view, setView] = useState('home');
+            const [selectedItem, setSelectedItem] = useState(null);
+            const [dbData, setDbData] = useState(FALLBACK_DB);
+            const [loading, setLoading] = useState(false);
+
+            useEffect(() => {
+                if (GOOGLE_SHEET_CSV_URL) {
+                    setLoading(true);
+                    Papa.parse(GOOGLE_SHEET_CSV_URL, {
+                        download: true,
+                        header: true,
+                        complete: (results) => {
+                            // 轉換 CSV 扁平資料為 App 需要的巢狀結構
+                            const parsedData = results.data
+                                .filter(row => row.itemName) // 過濾空行
+                                .map(row => ({
+                                    ...row,
+                                    images: {
+                                        bin: row.image_bin,
+                                        office: row.image_office,
+                                        floor: row.image_floor
+                                    }
+                                }));
+                            setDbData(parsedData);
+                            setLoading(false);
+                            console.log("Google Sheet Data Loaded:", parsedData.length);
+                        },
+                        error: (err) => {
+                            console.error("CSV Fetch Error:", err);
+                            setLoading(false);
+                            alert("讀取 Google Sheet 失敗，將使用展示資料。");
+                        }
+                    });
+                }
+            }, []);
+
+            const handleSelectItem = (item) => {
+                setSelectedItem(item);
+                setView('detail');
+                window.scrollTo(0, 0);
+            };
+
+            const handleBack = () => {
+                setView('home');
+                setSelectedItem(null);
+            };
+
+            return (
+                <div className="max-w-md mx-auto bg-gray-50 min-h-screen shadow-2xl overflow-hidden">
+                    {view === 'home' ? (
+                        <HomePage data={dbData} onSelectItem={handleSelectItem} loading={loading} />
+                    ) : (
+                        <DetailPage item={selectedItem} onBack={handleBack} />
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
