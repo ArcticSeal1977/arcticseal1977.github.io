@@ -52,8 +52,7 @@
         // 🔧 設定區：Google Sheets 設定
         // ==========================================
         
-        // 我已幫您填入轉換後的網址。
-        // 若未來要更換，請填入 ID 或 "發布到網路" 的 CSV 連結。
+        // 請填入 Google Sheet 網址
         const USER_PROVIDED_URL = "https://docs.google.com/spreadsheets/d/1gfLaPWDxW5NOW-mMi_Z1_j-TMh7PSTnC14XsLRMkI6U/edit?usp=sharing"; 
         
         // 備用資料
@@ -80,8 +79,9 @@
             // 嘗試從一般連結中提取 ID
             const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
             if (match && match[1]) {
-                // 使用 Google Visualization API (gviz) 來取得 CSV，這通常比直接 export 更穩定
-                return `https://docs.google.com/spreadsheets/d/${match[1]}/gviz/tq?tqx=out:csv`;
+                // 改用 /export?format=csv，這對於「共用連結」的相容性有時比 gviz 好
+                // 但仍建議使用「發布到網路」
+                return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv`;
             }
             return url;
         };
@@ -383,7 +383,7 @@
                             console.error("CSV Fetch Error:", err);
                             setLoading(false);
                             // 友善的錯誤訊息
-                            setErrorMsg('讀取失敗。請確認：1. Google Sheet 已「發布到網路」或權限設為「知道連結者可檢視」。 2. 網址正確。將暫時顯示範例資料。');
+                            setErrorMsg('讀取失敗。請確認：1. Google Sheet 左上角「檔案」>「共用」>「發布到網路」。 2. 確保網址正確。');
                         }
                     });
                 }
