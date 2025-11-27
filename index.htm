@@ -202,7 +202,7 @@
         };
 
         // ==========================================
-        // 🔍 首頁 (列表縮圖邏輯更新)
+        // 🔍 首頁 (列表縮圖邏輯更新 + 完整階層選單修復)
         // ==========================================
         const HomePage = ({ data, onSelectItem, loading, errorMsg }) => {
             const [query, setQuery] = useState('');
@@ -217,16 +217,29 @@
                 return ['All', ...new Set(validValues)];
             };
 
-            // 階層式過濾邏輯
+            // =================================================
+            // ⚡️ 階層式資料過濾與選項生成 (Cascade Logic)
+            // =================================================
+
+            // 1. 計算各層級的可用資料 (用於生成選項)
+            // Area -> System -> Subsystem -> Category -> ItemType -> ItemName
+            const dataLevel1 = useMemo(() => filters.area === 'All' ? data : data.filter(d => d.area === filters.area), [data, filters.area]);
+            const dataLevel2 = useMemo(() => filters.system === 'All' ? dataLevel1 : dataLevel1.filter(d => d.system === filters.system), [dataLevel1, filters.system]);
+            const dataLevel3 = useMemo(() => filters.subsystem === 'All' ? dataLevel2 : dataLevel2.filter(d => d.subsystem === filters.subsystem), [dataLevel2, filters.subsystem]);
+            const dataLevel4 = useMemo(() => filters.category === 'All' ? dataLevel3 : dataLevel3.filter(d => d.category === filters.category), [dataLevel3, filters.category]);
+            const dataLevel5 = useMemo(() => filters.itemType === 'All' ? dataLevel4 : dataLevel4.filter(d => d.itemType === filters.itemType), [dataLevel4, filters.itemType]);
+            
+            // 2. 基於過濾後的資料生成選項
+            const areaOptions = useMemo(() => getUniqueOptions(data, 'area'), [data]);
+            const systemOptions = useMemo(() => getUniqueOptions(dataLevel1, 'system'), [dataLevel1]);
+            const subsystemOptions = useMemo(() => getUniqueOptions(dataLevel2, 'subsystem'), [dataLevel2]);
+            const categoryOptions = useMemo(() => getUniqueOptions(dataLevel3, 'category'), [dataLevel3]);
+            const itemTypeOptions = useMemo(() => getUniqueOptions(dataLevel4, 'itemType'), [dataLevel4]);
+            const itemNameOptions = useMemo(() => getUniqueOptions(dataLevel5, 'itemName'), [dataLevel5]);
+
+            // 3. 最終列表過濾 (包含 ItemName + 文字搜尋)
             const filteredData = useMemo(() => {
-                let d = data || [];
-                // Cascade Filters
-                if(filters.area !== 'All') d = d.filter(i => i.area === filters.area);
-                if(filters.system !== 'All') d = d.filter(i => i.system === filters.system);
-                if(filters.subsystem !== 'All') d = d.filter(i => i.subsystem === filters.subsystem);
-                if(filters.category !== 'All') d = d.filter(i => i.category === filters.category);
-                if(filters.itemType !== 'All') d = d.filter(i => i.itemType === filters.itemType);
-                if(filters.itemName !== 'All') d = d.filter(i => i.itemName === filters.itemName);
+                let d = filters.itemName === 'All' ? dataLevel5 : dataLevel5.filter(d => d.itemName === filters.itemName);
 
                 // Text Search
                 if (query.trim()) {
@@ -238,31 +251,37 @@
                     );
                 }
                 return d;
-            }, [data, filters, query]);
+            }, [dataLevel5, filters.itemName, query]);
 
-            // 動態產生選項 (基於當前過濾結果的上層)
-            // 注意：這裡簡化處理，實際級聯應基於上一層級的結果
-            const areaOptions = useMemo(() => getUniqueOptions(data, 'area'), [data]);
-            // 以下選項應根據上層選擇動態變化，為求效能這裡使用簡單過濾
-            const systemOptions = useMemo(() => getUniqueOptions(filters.area === 'All' ? data : data.filter(d=>d.area===filters.area), 'system'), [data, filters.area]);
-            // ...以此類推，為保持程式碼簡潔，此處僅示範
-
+            // 4. 處理篩選變更 (自動重置下層)
             const handleFilterChange = (key, value) => {
                 const newFilters = { ...filters, [key]: value };
-                // Reset child filters logic could go here
-                if(key === 'system') { newFilters.subsystem = 'All'; newFilters.category = 'All'; } // simple example
+                
+                // Cascade Reset Logic
+                if (key === 'area') {
+                    newFilters.system='All'; newFilters.subsystem='All'; newFilters.category='All'; newFilters.itemType='All'; newFilters.itemName='All';
+                } else if (key === 'system') {
+                    newFilters.subsystem='All'; newFilters.category='All'; newFilters.itemType='All'; newFilters.itemName='All';
+                } else if (key === 'subsystem') {
+                    newFilters.category='All'; newFilters.itemType='All'; newFilters.itemName='All';
+                } else if (key === 'category') {
+                    newFilters.itemType='All'; newFilters.itemName='All';
+                } else if (key === 'itemType') {
+                    newFilters.itemName='All';
+                }
+                
                 setFilters(newFilters);
             };
 
-            const FilterSelect = ({ label, val, options, onChange }) => (
+            const FilterSelect = ({ label, val, options, onChange, disabled }) => (
                 <div className="relative min-w-[45%] flex-1">
                     <select 
                         value={val} 
                         onChange={(e) => onChange(e.target.value)}
-                        disabled={options.length <= 1}
+                        disabled={disabled || options.length <= 1}
                         className={`w-full appearance-none border rounded-lg py-2 pl-3 pr-8 text-sm focus:outline-none transition-colors
                             ${val !== 'All' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200'}
-                            ${options.length <= 1 ? 'opacity-50 cursor-not-allowed' : ''}
+                            ${(disabled || options.length <= 1) ? 'opacity-50 cursor-not-allowed' : ''}
                         `}
                         style={val !== 'All' ? {} : {backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='gray' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`}}
                     >
@@ -297,12 +316,25 @@
                                 </div>
                             )}
 
-                            {/* 簡化的過濾器 UI，實際專案可拆分更多層 */}
+                            {/* 完整階層過濾器 */}
                             <div className="flex flex-col gap-2">
+                                {/* Row 1: 區域 */}
+                                <FilterSelect label="📍 區域" val={filters.area} options={areaOptions} onChange={(v)=>handleFilterChange('area', v)} />
+                                
+                                {/* Row 2: 系統 | 子系統 */}
                                 <div className="flex gap-2">
-                                    <FilterSelect label="📍 區域" val={filters.area} options={areaOptions} onChange={(v)=>handleFilterChange('area', v)} />
                                     <FilterSelect label="系統" val={filters.system} options={systemOptions} onChange={(v)=>handleFilterChange('system', v)} />
+                                    <FilterSelect label="子系統" val={filters.subsystem} options={subsystemOptions} onChange={(v)=>handleFilterChange('subsystem', v)} disabled={filters.system === 'All'} />
                                 </div>
+                                
+                                {/* Row 3: 類別 | 品項 */}
+                                <div className="flex gap-2">
+                                    <FilterSelect label="類別" val={filters.category} options={categoryOptions} onChange={(v)=>handleFilterChange('category', v)} disabled={filters.subsystem === 'All'} />
+                                    <FilterSelect label="品項" val={filters.itemType} options={itemTypeOptions} onChange={(v)=>handleFilterChange('itemType', v)} disabled={filters.category === 'All'} />
+                                </div>
+
+                                {/* Row 4: 品名 */}
+                                <FilterSelect label="品名" val={filters.itemName} options={itemNameOptions} onChange={(v)=>handleFilterChange('itemName', v)} disabled={filters.itemType === 'All'} />
                             </div>
                         </div>
                     </div>
@@ -370,14 +402,14 @@
                                     .filter(row => row.itemName)
                                     .map(row => ({
                                         ...row,
-                                        // 映射新欄位
-                                        notes: row.notes, 
-                                        externalLink: row.external_link,
+                                        // 映射新欄位 (支援中英文欄位名稱)
+                                        notes: row.notes || row['備註'], 
+                                        externalLink: row.external_link || row['externalLink'] || row['外部連結'] || row['外部資料連結'],
                                         images: {
-                                            item: row.item_photo, // NEW
-                                            bin: row.image_bin,
-                                            office: row.image_office,
-                                            floor: row.image_floor
+                                            item: row.item_photo || row['物品照片'], 
+                                            bin: row.image_bin || row['儲位示意圖'],
+                                            office: row.image_office || row['辦公室平面圖'],
+                                            floor: row.image_floor || row['樓層平面圖']
                                         }
                                     }));
                                 setDbData(parsedData);
